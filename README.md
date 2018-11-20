@@ -13,3 +13,5 @@ Non-invasive progress bar for FFmpeg
 ffpb ffmpeg xxx
 ffmpeg xxx |& ffpb
 ```
+
+[![asciicast](https://asciinema.org/a/ShrA2osO2bIKLWzZYhbgjsrkl.svg)](https://asciinema.org/a/ShrA2osO2bIKLWzZYhbgjsrkl)
