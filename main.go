@@ -77,7 +77,7 @@ func renderProgress(duration int, line string, out *os.File) {
 	}
 }
 
-func initProgressBar(duration int, out *os.File) (*pb.ProgressBar) {
+func initProgressBar(duration int, out *os.File) *pb.ProgressBar {
 	bar := pb.New(duration)
 	bar.Output = out
 	bar.SetUnits(pb.U_DURATION)
@@ -125,8 +125,21 @@ func catchTerminate(cmd *exec.Cmd) {
 	}
 }
 
+func usage() {
+	fmt.Fprintln(os.Stderr, `ffpb - Non-invasive progress bar for FFmpeg
+usage: ffpb [command]
+example:
+	ffpb ffmpeg [options]
+	ffmpeg [options] |& ffpb`)
+	os.Exit(1)
+}
+
 func main() {
+
 	if len(os.Args) == 1 {
+		if isatty.IsTerminal(os.Stdin.Fd()) {
+			usage()
+		}
 		readLine(os.Stdin, os.Stdout)
 		return
 	}
@@ -134,21 +147,21 @@ func main() {
 	ptyStdin, ttyStdin, err := pty.Open()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "pty open error %s", err)
-		return
+		os.Exit(1)
 	}
 	defer ptyStdin.Close()
 
 	ptyStdout, ttyStdout, err := pty.Open()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "pty open error %s", err)
-		return
+		os.Exit(1)
 	}
 	defer ptyStdout.Close()
 
 	ptyStderr, ttyStderr, err := pty.Open()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "pty open error %s", err)
-		return
+		os.Exit(1)
 	}
 	defer ptyStderr.Close()
 
@@ -164,7 +177,7 @@ func main() {
 	err = cmd.Start()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "cmd start error %s", err)
-		return
+		os.Exit(1)
 	}
 
 	ttyStdin.Close()
