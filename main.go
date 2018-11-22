@@ -87,7 +87,7 @@ func initProgressBar(duration int, out *os.File) *pb.ProgressBar {
 	return bar
 }
 
-func readLine(in *os.File, out *os.File) error {
+func readLine(in io.Reader, out *os.File) error {
 	scanner := bufio.NewScanner(in)
 	scanner.Split(splitLine)
 	duration := 0
@@ -144,51 +144,88 @@ func main() {
 		return
 	}
 
-	ptyStdin, ttyStdin, err := pty.Open()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "pty open error %s", err)
-		os.Exit(1)
-	}
-	defer ptyStdin.Close()
-
-	ptyStdout, ttyStdout, err := pty.Open()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "pty open error %s", err)
-		os.Exit(1)
-	}
-	defer ptyStdout.Close()
-
-	ptyStderr, ttyStderr, err := pty.Open()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "pty open error %s", err)
-		os.Exit(1)
-	}
-	defer ptyStderr.Close()
-
 	cmd := exec.Command(os.Args[1], os.Args[2:]...)
-	cmd.Stdin = ttyStdin
-	cmd.Stdout = ttyStdout
-	cmd.Stderr = ttyStderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Setctty: true,
 		Setsid:  true,
 	}
 
-	err = cmd.Start()
+	stdinWriter, stdoutReader, stderrReader, closeAfterStart, closeAfterWait := redirect(cmd)
+
+	err := cmd.Start()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "cmd start error %s", err)
 		os.Exit(1)
 	}
 
-	ttyStdin.Close()
-	ttyStdout.Close()
-	ttyStderr.Close()
+	go io.Copy(stdinWriter, os.Stdin)
+	go readLine(stdoutReader, os.Stdout)
+	go readLine(stderrReader, os.Stderr)
 
-	go io.Copy(ptyStdin, os.Stdin)
-	go readLine(ptyStdout, os.Stdout)
-	go readLine(ptyStderr, os.Stderr)
+	for _, c := range closeAfterStart {
+		c.Close()
+	}
+	defer func() {
+		for _, c := range closeAfterWait {
+			c.Close()
+		}
+	}()
 
 	go catchTerminate(cmd)
 
 	cmd.Wait()
+}
+
+func redirect(cmd *exec.Cmd) (io.Writer, io.ReadCloser, io.ReadCloser, []io.Closer, []io.Closer) {
+	var closeAfterStart []io.Closer
+	var closeAfterWait []io.Closer
+
+	ptyStdin, ttyStdin, err := pty.Open()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "pty open error %s", err)
+		os.Exit(1)
+	}
+	cmd.Stdin = ttyStdin
+	closeAfterStart = append(closeAfterStart, ttyStdin)
+	closeAfterWait = append(closeAfterWait, ptyStdin)
+
+	var stdoutReader io.ReadCloser
+	if isatty.IsTerminal(os.Stdout.Fd()) {
+		ptyStdout, ttyStdout, err := pty.Open()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "pty open error %s", err)
+			os.Exit(1)
+		}
+		cmd.Stdout = ttyStdout
+		closeAfterStart = append(closeAfterStart, ttyStdout)
+		closeAfterWait = append(closeAfterWait, ptyStdout)
+		stdoutReader = ptyStdout
+	} else {
+		stdoutReader, err = cmd.StdoutPipe()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "pipe error %s", err)
+			os.Exit(1)
+		}
+	}
+
+	var stderrReader io.ReadCloser
+	if isatty.IsTerminal(os.Stderr.Fd()) {
+		ptyStderr, ttyStderr, err := pty.Open()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "pty open error %s", err)
+			os.Exit(1)
+		}
+		stderrReader = ptyStderr
+		closeAfterStart = append(closeAfterStart, ttyStderr)
+		closeAfterWait = append(closeAfterWait, ptyStderr)
+		cmd.Stderr = ttyStderr
+	} else {
+		stderrReader, err = cmd.StderrPipe()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "pipe error %s", err)
+			os.Exit(1)
+		}
+	}
+
+	return ptyStdin, stdoutReader, stderrReader, closeAfterStart, closeAfterWait
 }
